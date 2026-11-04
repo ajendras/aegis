@@ -1,0 +1,30 @@
+{
+    "name": "aegis-flow/aegis-flow",
+    "description": "Self-hosted PHP CMS and control panel for secure remote access, monitoring and AI-assisted automation on iOS, Android and Windows devices.",
+    "keywords": ["remote-access", "websocket", "automation", "security", "cms"],
+    "license": "AGPL-3.0-only",
+    "type": "project",
+    "require": {
+        "php": "^8.2",
+        "ratchet/ratchet": "^0.4.4",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "AegisFlow\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "serve": "php -S localhost:8080 -t public",
+        "start": "@serve"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}
