@@ -8,125 +8,80 @@ use AegisFlow\Storage\JsonRepo;
 use InvalidArgumentException;
 
 /**
- * JSON-backed device registry.
+ * JSON‑backed device registry.
  *
- * Persists device metadata, status and tags using the JsonRepo abstraction.
- * Provides fast lookup, tag-based filtering and immutable last_seen tracking.
+ * Stores device metadata (platform, name, tags, status, timestamps) in a
+ * `devices.json` file via {@see JsonRepo}. Provides simple CRUD‑style
+ * operations used throughout the application and test suite.
  */
 final class Registry
 {
     private JsonRepo $repo;
-    private const ENTITY = 'devices';
 
-    public function __construct(JsonRepo $repo)
+    /**
+     * @param JsonRepo $repo Optional repository; if omitted a default instance is created.
+     */
+    public function __construct(JsonRepo $repo = null)
     {
-        $this->repo = $repo;
+        $this->repo = $repo ?? new JsonRepo();
     }
 
     /**
-     * Register a new device or update an existing one.
+     * Add a new device to the registry.
      *
-     * @param array $info Raw device information (platform, name, tags, etc.)
-     * @return string The assigned device ID
+     * @param array $info Must contain at least a `platform` key. Optional keys:
+     *                    `name`, `os_version`, `tags` (array of strings).
+     *
+     * @return string The generated device identifier.
      *
      * @throws InvalidArgumentException
      */
     public function add(array $info): string
     {
-        if (!isset($info['platform']) || trim((string)$info['platform']) === '') {
-            throw new InvalidArgumentException('Device info must contain a valid platform.');
+        if (!isset($info['platform']) || !is_string($info['platform']) || trim($info['platform']) === '') {
+            throw new InvalidArgumentException('Device info must contain a non‑empty "platform" string.');
         }
 
-        $devices = $this->repo->read(self::ENTITY);
-        $platform = strtolower(trim((string)$info['platform']));
+        $platform = strtolower(trim($info['platform']));
 
-        $id = trim((string)($info['id'] ?? ''));
-        if ($id === '') {
-            $id = 'dev-' . substr(bin2hex(random_bytes(8)), 0, 12);
-        }
-
-        // Ensure ID uniqueness
-        $existingIds = array_column($devices, 'id');
-        while (in_array($id, $existingIds, true)) {
-            $id = 'dev-' . substr(bin2hex(random_bytes(8)), 0, 12);
-        }
+        $deviceId = 'dev-' . bin2hex(random_bytes(6));
 
         $device = [
-            'id' => $id,
-            'name' => trim((string)($info['name'] ?? $this->generateDefaultName($platform))),
+            'id' => $deviceId,
             'platform' => $platform,
-            'status' => 'online',
-            'battery' => (int)($info['battery'] ?? 100),
+            'name' => $info['name'] ?? null,
+            'os_version' => $info['os_version'] ?? null,
+            'tags' => array_map('strtolower', $info['tags'] ?? []),
+            'status' => 'offline',
+            'created_at' => time(),
             'last_seen' => time(),
-            'tags' => $this->normalizeTags($info['tags'] ?? []),
-            'os_version' => trim((string)($info['os_version'] ?? 'unknown')),
-            'ip' => trim((string)($info['ip'] ?? '')),
         ];
 
-        // Merge any additional fields provided
-        $devices[] = array_merge($device, array_diff_key($info, $device));
+        $devices = $this->repo->read('devices');
+        $devices[] = $device;
+        $this->repo->write('devices', $devices);
 
-        $this->repo->write(self::ENTITY, $devices);
-
-        return $id;
+        return $deviceId;
     }
 
     /**
-     * Update device status and metadata.
+     * Find a device by its identifier.
      *
-     * Always updates the last_seen timestamp.
-     */
-    public function updateStatus(string $id, array $status): void
-    {
-        $id = trim($id);
-        if ($id === '') {
-            throw new InvalidArgumentException('Device ID cannot be empty.');
-        }
-
-        $devices = $this->repo->read(self::ENTITY);
-        $updated = false;
-
-        foreach ($devices as &$device) {
-            if (($device['id'] ?? '') === $id) {
-                $device = array_merge($device, $status);
-                $device['last_seen'] = time();
-
-                // Ensure tags remain an array
-                if (isset($status['tags'])) {
-                    $device['tags'] = $this->normalizeTags($status['tags']);
-                } elseif (!isset($device['tags']) || !is_array($device['tags'])) {
-                    $device['tags'] = [];
-                }
-
-                $updated = true;
-                break;
-            }
-        }
-
-        if ($updated) {
-            $this->repo->write(self::ENTITY, $devices);
-        } else {
-            // Auto-register unknown devices with minimal info
-            $this->add(array_merge(['id' => $id], $status));
-        }
-    }
-
-    /**
-     * Find a device by ID.
+     * @param string $deviceId
      *
-     * @return array Device record or empty array if not found
+     * @return array Empty array if not found.
      */
-    public function find(string $id): array
+    public function find(string $deviceId): array
     {
-        $id = trim($id);
-        if ($id === '') {
+        $deviceId = trim($deviceId);
+        if ($deviceId === '') {
             return [];
         }
 
-        $devices = $this->repo->read(self::ENTITY);
+        $devices = $this->repo->read('devices');
 
         foreach ($devices as $device) {
-            if (($device['id'] ?? '') === $id) {
+            if (($device['id'] ?? '') === $deviceId) {
                 return $device;
             }
         }
@@ -135,17 +90,57 @@ final class Registry
     }
 
     /**
-     * Return all registered devices.
+     * Update status‑related fields for a device.
      *
-     * @return array<int, array>
+     * @param string $deviceId
+     * @param array  $data     Arbitrary key/value pairs to merge into the device record.
+     *
+     * @throws InvalidArgumentException If the device does not exist.
      */
-    public function all(): array
+    public function updateStatus(string $deviceId, array $data): void
     {
-        return $this->repo->read(self::ENTITY);
+        $deviceId = trim($deviceId);
+        if ($deviceId === '') {
+            throw new InvalidArgumentException('Device ID cannot be empty.');
+        }
+
+        $devices = $this->repo->read('devices');
+        $found = false;
+
+        foreach ($devices as &$device) {
+            if (($device['id'] ?? '') === $deviceId) {
+                // Merge provided data; preserve existing keys unless overwritten.
+                $device = array_merge($device, $data);
+                // Ensure timestamps are sensible.
+                $device['last_seen'] = $data['last_seen'] ?? time();
+                $found = true;
+                break;
+            }
+        }
+
+        if (!$found) {
+            throw new InvalidArgumentException(sprintf('Device "%s" not found.', $deviceId));
+        }
+
+        $this->repo->write('devices', $devices);
     }
 
     /**
-     * Return devices that match a given tag.
+     * Return all registered devices.
+     *
+     * @return array<int, array> List of device records.
+     */
+    public function all(): array
+    {
+        return $this->repo->read('devices');
+    }
+
+    /**
+     * Return devices that have the given tag.
+     *
+     * Tag comparison is case‑insensitive.
+     *
+     * @param string $tag
      *
      * @return array<int, array>
      */
@@ -153,54 +148,19 @@ final class Registry
     {
         $tag = strtolower(trim($tag));
         if ($tag === '') {
-            return $this->all();
-        }
-
-        $devices = $this->repo->read(self::ENTITY);
-        $result = [];
-
-        foreach ($devices as $device) {
-            $deviceTags = array_map('strtolower', $this->normalizeTags($device['tags'] ?? []));
-            if (in_array($tag, $deviceTags, true)) {
-                $result[] = $device;
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Normalize a tags input into a clean string array.
-     *
-     * @param mixed $tags
-     * @return array<string>
-     */
-    private function normalizeTags(mixed $tags): array
-    {
-        if (is_string($tags)) {
-            $tags = array_filter(array_map('trim', explode(',', $tags)));
-        }
-
-        if (!is_array($tags)) {
             return [];
         }
 
-        return array_values(array_unique(array_filter(array_map(
-            fn($t) => strtolower(trim((string)$t)),
-            $tags
-        ))));
-    }
+        $devices = $this->repo->read('devices');
+        $matched = [];
 
-    /**
-     * Generate a friendly default name based on platform.
-     */
-    private function generateDefaultName(string $platform): string
-    {
-        return match ($platform) {
-            'android' => 'Android Device',
-            'ios' => 'iOS Device',
-            'windows' => 'Windows Device',
-            default => 'Connected Device',
-        };
+        foreach ($devices as $device) {
+            $deviceTags = $device['tags'] ?? [];
+            if (is_array($deviceTags) && in_array($tag, $deviceTags, true)) {
+                $matched[] = $device;
+            }
+        }
+
+        return $matched;
     }
 }
