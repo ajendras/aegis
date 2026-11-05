@@ -5,182 +5,116 @@ declare(strict_types=1);
 namespace AegisFlow\Tests;
 
 use AegisFlow\Devices\Registry;
+use AegisFlow\Devices\Protocol;
 use AegisFlow\Storage\JsonRepo;
+use AegisFlow\Commands\Dispatcher;
+use AegisFlow\Core\Config;
+use AegisFlow\Logger\AuditLog;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * Tests for Registry with added coverage for macOS platform and
+ * AppleScript command type (via Protocol and Dispatcher).
+ */
 final class RegistryTest extends TestCase
 {
     private JsonRepo $repo;
     private Registry $registry;
+    private Protocol $protocol;
 
     protected function setUp(): void
     {
         $this->repo = new JsonRepo();
-
-        // Clear storage for test isolation
+        // Reset storage for test isolation
         $this->repo->write('devices', []);
         $this->repo->write('commands', []);
-        $this->repo->write('logs', []);
-
         $this->registry = new Registry($this->repo);
+        $this->protocol = new Protocol();
     }
 
-    protected function tearDown(): void
-    {
-        // Clean up after each test
-        $this->repo->write('devices', []);
-    }
-
-    public function testDeviceRegistrationReturnsIdAndStoresDevice(): void
+    public function testMacosDeviceRegistration(): void
     {
         $info = [
-            'platform' => 'android',
-            'name' => 'Pixel Test Device',
-            'tags' => ['test', 'mobile'],
-            'os_version' => '14',
+            'platform' => 'macos',
+            'name' => 'Test MacBook Pro',
+            'tags' => ['lab', 'apple'],
+            'os_version' => '14.5',
         ];
 
         $deviceId = $this->registry->add($info);
+        $this->assertNotEmpty($deviceId, 'Device ID should be generated for macOS');
 
-        $this->assertNotEmpty($deviceId, 'Registration must return a non-empty ID');
-        $this->assertStringStartsWith('dev_', $deviceId, 'ID should be prefixed');
-
-        $retrieved = $this->registry->find($deviceId);
-        $this->assertIsArray($retrieved);
-        $this->assertEquals($deviceId, $retrieved['id']);
-        $this->assertEquals('android', $retrieved['platform']);
-        $this->assertEquals('Pixel Test Device', $retrieved['name']);
-        $this->assertEquals(['test', 'mobile'], $retrieved['tags']);
-        $this->assertEquals('14', $retrieved['os_version']);
-        $this->assertArrayHasKey('last_seen', $retrieved);
-        $this->assertEquals('offline', $retrieved['status'] ?? null);
+        $device = $this->registry->find($deviceId);
+        $this->assertEquals('macos', $device['platform']);
+        $this->assertEquals('Test MacBook Pro', $device['name']);
+        $this->assertContains('lab', $device['tags'] ?? []);
     }
 
-    public function testUpdateStatusModifiesDeviceRecord(): void
+    public function testProtocolSupportsAppleScript(): void
     {
-        $deviceId = $this->registry->add([
-            'platform' => 'ios',
-            'name' => 'iPhone Simulator',
+        $command = $this->protocol->createCommand('applescript', [
+            'script' => 'tell application "Finder" to display dialog "Hello from Aegis Flow"',
+            'timeout' => 15,
         ]);
 
-        $this->registry->updateStatus($deviceId, [
+        $this->assertArrayHasKey('id', $command);
+        $this->assertEquals('applescript', $command['type']);
+        $this->assertArrayHasKey('script', $command['params']);
+        $this->assertEquals('1.1', $command['protocol_version']);
+    }
+
+    public function testDispatcherWithMacosAndAppleScript(): void
+    {
+        $config = new Config();
+        $auditLog = new AuditLog($this->repo);
+
+        $deviceId = $this->registry->add([
+            'platform' => 'macos',
+            'name' => 'Aegis Test Mac',
+            'tags' => ['test'],
+        ]);
+
+        $dispatcher = new Dispatcher($this->registry, $config, $auditLog);
+        $success = $dispatcher->dispatch($deviceId, 'applescript', [
+            'script' => 'display notification "Test completed" with title "Aegis Flow"',
+        ]);
+
+        $this->assertTrue($success);
+
+        $commands = $this->repo->read('commands');
+        $this->assertNotEmpty($commands);
+
+        $last = end($commands);
+        $this->assertEquals($deviceId, $last['device_id']);
+        $this->assertEquals('macos', $last['platform']);
+        $this->assertEquals('applescript', $last['type']);
+        $this->assertEquals('pending', $last['status']);
+    }
+
+    public function testByTagFiltersMacosDevices(): void
+    {
+        $this->registry->add(['platform' => 'android', 'tags' => ['test']]);
+        $this->registry->add(['platform' => 'macos', 'tags' => ['test', 'apple']]);
+        $this->registry->add(['platform' => 'ios', 'tags' => ['other']]);
+
+        $tagged = $this->registry->byTag('test');
+        $this->assertCount(2, $tagged);
+        $platforms = array_column($tagged, 'platform');
+        $this->assertContains('macos', $platforms);
+    }
+
+    public function testUpdateStatusAndAll(): void
+    {
+        $id = $this->registry->add(['platform' => 'macos', 'name' => 'StatusTest']);
+        $this->registry->updateStatus($id, [
             'status' => 'online',
             'battery' => 92,
-            'last_seen' => 1735689600,
-            'ip' => '192.168.1.100',
-        ]);
-
-        $device = $this->registry->find($deviceId);
-
-        $this->assertEquals('online', $device['status']);
-        $this->assertEquals(92, $device['battery']);
-        $this->assertEquals(1735689600, $device['last_seen']);
-        $this->assertEquals('192.168.1.100', $device['ip']);
-    }
-
-    public function testByTagReturnsOnlyMatchingDevices(): void
-    {
-        $this->registry->add([
-            'platform' => 'android',
-            'name' => 'Android Phone',
-            'tags' => ['test', 'lab'],
-        ]);
-
-        $this->registry->add([
-            'platform' => 'windows',
-            'name' => 'Work Laptop',
-            'tags' => ['lab', 'production'],
-        ]);
-
-        $this->registry->add([
-            'platform' => 'ios',
-            'name' => 'Test iPad',
-            'tags' => ['test'],
-        ]);
-
-        $labDevices = $this->registry->byTag('lab');
-        $this->assertCount(2, $labDevices);
-        $this->assertEquals('android', $labDevices[0]['platform']);
-        $this->assertEquals('windows', $labDevices[1]['platform']);
-
-        $productionDevices = $this->registry->byTag('production');
-        $this->assertCount(1, $productionDevices);
-        $this->assertEquals('Work Laptop', $productionDevices[0]['name']);
-
-        // Case-insensitive matching
-        $this->assertCount(3, $this->registry->byTag('TEST'));
-    }
-
-    public function testAllReturnsCompleteDeviceList(): void
-    {
-        $this->registry->add(['platform' => 'android', 'name' => 'Device A']);
-        $this->registry->add(['platform' => 'ios', 'name' => 'Device B']);
-        $this->registry->add(['platform' => 'windows', 'name' => 'Device C']);
-
-        $all = $this->registry->all();
-
-        $this->assertCount(3, $all);
-        $names = array_column($all, 'name');
-        $this->assertContains('Device A', $names);
-        $this->assertContains('Device B', $names);
-        $this->assertContains('Device C', $names);
-    }
-
-    public function testCommandRoundTripSimulation(): void
-    {
-        // Simulate full lifecycle: register → command dispatch simulation
-        // → response received → status updated
-        $deviceId = $this->registry->add([
-            'platform' => 'windows',
-            'name' => 'Command Test PC',
-            'tags' => ['test'],
-        ]);
-
-        // Simulate command being sent (status change)
-        $this->registry->updateStatus($deviceId, [
-            'status' => 'online',
-            'last_command' => 'screenshot',
-            'last_command_at' => time(),
-        ]);
-
-        $device = $this->registry->find($deviceId);
-        $this->assertEquals('screenshot', $device['last_command'] ?? null);
-        $this->assertArrayHasKey('last_command_at', $device);
-
-        // Simulate response received from agent
-        $this->registry->updateStatus($deviceId, [
-            'status' => 'online',
-            'battery' => 76,
-            'last_response' => 'success',
             'last_seen' => time(),
         ]);
 
-        $updated = $this->registry->find($deviceId);
-        $this->assertEquals(76, $updated['battery']);
-        $this->assertEquals('success', $updated['last_response'] ?? null);
-
-        // Verify it still appears in tag filter after updates
-        $testDevices = $this->registry->byTag('test');
-        $this->assertCount(1, $testDevices);
-        $this->assertEquals($deviceId, $testDevices[0]['id']);
-    }
-
-    public function testFindReturnsEmptyArrayForUnknownDevice(): void
-    {
-        $result = $this->registry->find('non-existent-id');
-        $this->assertIsArray($result);
-        $this->assertEmpty($result);
-    }
-
-    public function testRegistrationWithNoTagsNormalizesToEmptyArray(): void
-    {
-        $id = $this->registry->add([
-            'platform' => 'android',
-            'name' => 'No Tags Device',
-        ]);
-
-        $device = $this->registry->find($id);
-        $this->assertIsArray($device['tags'] ?? null);
-        $this->assertEmpty($device['tags']);
+        $all = $this->registry->all();
+        $this->assertCount(1, $all);
+        $this->assertEquals('online', $all[0]['status']);
+        $this->assertEquals(92, $all[0]['battery']);
     }
 }

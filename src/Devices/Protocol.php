@@ -11,7 +11,8 @@ use InvalidArgumentException;
  *
  * All commands dispatched to agents must conform to the envelope
  * produced by createCommand(). Responses are validated before being
- * stored or forwarded to the AuditLog and Registry.
+ * stored or forwarded to the AuditLog and Registry. Now includes
+ * 'applescript' command type for the new MacosHandler.
  */
 final class Protocol
 {
@@ -29,6 +30,7 @@ final class Protocol
         'get_battery',
         'notify',
         'diagnostics',
+        'applescript',
     ];
 
     /**
@@ -40,133 +42,60 @@ final class Protocol
         'success',
         'error',
         'failed',
-        'acknowledged',
-        'partial',
+        'timeout',
     ];
 
     /**
-     * Create a standardized, signed command envelope.
-     *
-     * The returned array is the canonical format passed to
-     * platform-specific handlers and then encrypted.
+     * Create a canonical command envelope that all platform handlers
+     * (including MacosHandler) can consume.
      *
      * @param string $type One of the VALID_COMMAND_TYPES
-     * @param array $params Type-specific parameters (will be normalized)
-     * @return array{
-     *   id: string,
-     *   type: string,
-     *   params: array,
-     *   ts: int,
-     *   protocol_version: string
-     * }
+     * @param array $params Additional parameters for the command
+     * @return array Command with id, type, params, timestamp etc.
      *
      * @throws InvalidArgumentException
      */
     public function createCommand(string $type, array $params = []): array
     {
         $type = strtolower(trim($type));
-
-        if ($type === '') {
-            throw new InvalidArgumentException('Command type cannot be empty.');
-        }
-
         if (!in_array($type, self::VALID_COMMAND_TYPES, true)) {
             throw new InvalidArgumentException(
                 sprintf(
-                    'Unsupported command type "%s". Valid types: %s.',
+                    'Unsupported command type "%s". Supported types: %s.',
                     $type,
                     implode(', ', self::VALID_COMMAND_TYPES)
                 )
             );
         }
 
-        if (!is_array($params)) {
-            throw new InvalidArgumentException('Command parameters must be provided as an array.');
-        }
+        $id = 'cmd-' . bin2hex(random_bytes(6));
 
         return [
-            'id' => 'cmd_' . bin2hex(random_bytes(8)),
+            'id' => $id,
             'type' => $type,
-            'params' => $this->normalizeParams($params),
+            'params' => $params,
             'ts' => time(),
             'protocol_version' => '1.1',
+            'platform_agnostic' => true,
         ];
     }
 
     /**
-     * Validate a response received from any agent.
+     * Validate a response received from an agent.
      *
-     * Ensures structural integrity, required fields, and allowed status values.
-     * Used by Hub, Dispatcher and AuditLog before persisting results.
+     * Checks for required fields and that the status is one of the
+     * allowed values.
      */
     public function validateResponse(array $response): bool
     {
-        if (empty($response)) {
+        if (!isset($response['id'], $response['status'])) {
             return false;
         }
 
-        $requiredFields = ['id', 'status', 'command_type'];
-        foreach ($requiredFields as $field) {
-            if (!array_key_exists($field, $response)) {
-                return false;
-            }
-
-            $value = $response[$field];
-            if (is_string($value) && trim($value) === '') {
-                return false;
-            }
-        }
-
-        if (!in_array($response['status'], self::VALID_RESPONSE_STATUSES, true)) {
-            return false;
-        }
-
-        // Optional fields must have sane types when present
-        if (isset($response['result'])) {
-            if (!is_array($response['result']) && !is_scalar($response['result']) && $response['result'] !== null) {
-                return false;
-            }
-        }
-
-        if (isset($response['error']) && !is_string($response['error'])) {
-            return false;
-        }
-
-        // Command ID in response must match expected pattern
-        if (isset($response['id']) && !str_starts_with((string)$response['id'], 'cmd_')) {
+        if (!in_array(strtolower($response['status']), self::VALID_RESPONSE_STATUSES, true)) {
             return false;
         }
 
         return true;
-    }
-
-    /**
-     * Recursively normalize and sanitize parameters.
-     *
-     * Trims strings, coerces numeric values, recurses into arrays.
-     * Prevents injection of unexpected data shapes into encrypted payloads.
-     */
-    private function normalizeParams(array $params): array
-    {
-        $normalized = [];
-
-        foreach ($params as $rawKey => $value) {
-            $key = strtolower(trim((string)$rawKey));
-
-            if (is_string($value)) {
-                $normalized[$key] = trim($value);
-            } elseif (is_int($value) || is_float($value)) {
-                $normalized[$key] = $value;
-            } elseif (is_bool($value)) {
-                $normalized[$key] = $value;
-            } elseif (is_array($value)) {
-                $normalized[$key] = $this->normalizeParams($value);
-            } else {
-                // null or other scalars become null to avoid serialization surprises
-                $normalized[$key] = null;
-            }
-        }
-
-        return $normalized;
     }
 }

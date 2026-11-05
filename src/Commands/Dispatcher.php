@@ -12,6 +12,7 @@ use AegisFlow\Security\ChannelEncryptor;
 use AegisFlow\Agents\AndroidHandler;
 use AegisFlow\Agents\IosHandler;
 use AegisFlow\Agents\WindowsHandler;
+use AegisFlow\Agents\MacosHandler;
 use AegisFlow\Storage\JsonRepo;
 use InvalidArgumentException;
 use RuntimeException;
@@ -21,9 +22,9 @@ use RuntimeException;
  * persists them for delivery, and supports bulk operations by tag.
  *
  * All commands are first normalized by Protocol, then transformed by the
- * appropriate *Handler, encrypted per-device, and stored in commands.json.
- * The WebSocket Hub (not yet instantiated here) can later pick up pending
- * commands for connected agents.
+ * appropriate *Handler (including the new MacosHandler with AppleScript
+ * support), encrypted per-device, and stored in commands.json.
+ * The WebSocket Hub can later pick up pending commands for connected agents.
  */
 final class Dispatcher
 {
@@ -151,7 +152,8 @@ final class Dispatcher
             'android' => new AndroidHandler(),
             'ios' => new IosHandler(),
             'windows' => new WindowsHandler(),
-            default => throw new InvalidArgumentException(sprintf('Unsupported platform "%s".', $platform)),
+            'macos' => new MacosHandler(),
+            default => throw new InvalidArgumentException(sprintf('Unsupported platform "%s". Supported: android, ios, windows, macos.', $platform)),
         };
     }
 

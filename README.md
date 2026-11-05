@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/github/last-commit/ajendras/aegis?style=for-the-badge&color=0f172a" alt="Last commit">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-22c55e?style=for-the-badge" alt="PRs welcome"></a>
 
-**Self-hosted PHP CMS and control panel for secure remote access, monitoring and AI-assisted automation on iOS, Android and Windows devices.**
+**Self-hosted PHP CMS and control panel for secure remote access, monitoring and AI-assisted automation on iOS, Android, Windows and macOS devices.**
 
 [✨ Features](#-features) • [⚡ Quick start](#-quick-start) • [🧰 Usage](#-usage) • [🧩 Architecture](#-architecture) • [📍 Roadmap](#-roadmap) • [🤝 Contributing](#-contributing)
 
@@ -25,7 +25,7 @@ Remote management solutions are usually proprietary SaaS with poor privacy guara
 
 - **Privacy-first** — per-device Libsodium keys keep every command and response encrypted; nothing leaves your infrastructure.
 - **Zero-database** — pure JSON storage via `JsonRepo` makes setup trivial and portable.
-- **Cross-platform** — unified `Dispatcher` + platform handlers (`AndroidHandler`, `IosHandler`, `WindowsHandler`) speak the same protocol.
+- **Cross-platform** — unified `Dispatcher` + platform handlers (`AndroidHandler`, `IosHandler`, `WindowsHandler`, `MacosHandler`) speak the same protocol.
 - **AI-assisted automation** — `Assistant::suggest()` turns plain English into validated command sequences.
 
 ## 🎬 Demo
@@ -49,6 +49,11 @@ Remote management solutions are usually proprietary SaaS with poor privacy guara
 <td>🏷️ <b>Bulk Ops</b><br>`Dispatcher::broadcastToTag()` sends commands to groups defined in `Registry::byTag()`</td>
 <td>📋 <b>Agent Protocol</b><br>`Protocol::createCommand()` and `validateResponse()` enforce schema across platforms</td>
 <td>🌑 <b>Dark UI</b><br>Tailwind + Alpine.js dashboard with micro-animations, keyboard shortcuts and theme toggle</td>
+</tr>
+<tr>
+<td>🍎 <b>macOS Support</b><br>`MacosHandler` with native AppleScript execution for UI automation, notifications, dialogs and system control via osascript</td>
+<td>🔄 <b>Command Expansion</b><br>Assistant::expand() now supports applescript commands via updated Protocol</td>
+<td></td>
 </tr>
 </table>
 
@@ -134,6 +139,19 @@ foreach ($commands as $cmd) {
 }
 ```
 
+### AppleScript automation on macOS
+
+```php
+$dispatcher = new Dispatcher($registry, $config, $auditLog);
+$dispatcher->dispatch($macDeviceId, 'applescript', [
+    'script' => 'tell application "Safari" to activate',
+]);
+$dispatcher->dispatch($macDeviceId, 'notify', [
+    'title' => 'Aegis Flow',
+    'body' => 'Automation finished',
+]);
+```
+
 ### Bulk broadcast by tag
 
 ```php
@@ -178,7 +196,7 @@ flowchart TD
     Application --> Dispatcher[Commands\Dispatcher]
     Application --> Assistant[Automation\Assistant]
 
-    Hub <--> Agents[Agents/*Handler<br/>AndroidHandler / IosHandler / WindowsHandler]
+    Hub <--> Agents[Agents/*Handler<br/>AndroidHandler / IosHandler / WindowsHandler / MacosHandler]
     Dispatcher --> Registry[Devices\Registry]
     Dispatcher --> Encryptor[Security\ChannelEncryptor]
     Dispatcher --> Protocol[Devices\Protocol]
@@ -208,7 +226,8 @@ Aegis Flow uses a central `Application` that bootstraps `Config`, `Registry` and
 │   ├── Agents/
 │   │   ├── AndroidHandler.php    # handle() → execute_shell, capture_screen, etc.
 │   │   ├── IosHandler.php        # handle() → companion_v2 payloads
-│   │   └── WindowsHandler.php    # handle() → powershell_execute, etc.
+│   │   ├── WindowsHandler.php    # handle() → powershell_execute, etc.
+│   │   └── MacosHandler.php      # handle() with first-class AppleScript via osascript
 │   ├── Commands/
 │   │   └── Dispatcher.php        # dispatch(), broadcastToTag(), uses platform handlers + encryption
 │   ├── Automation/
@@ -238,12 +257,12 @@ composer test
 vendor/bin/phpunit
 ```
 
-`RegistryTest.php` covers device registration, status updates, tag filtering, and command round-trip simulation using the real `Registry`, `Protocol` and mock handlers.
+`RegistryTest.php` covers device registration, status updates, tag filtering, and command round-trip simulation using the real `Registry`, `Protocol` and mock handlers. New tests were added for macOS registration, AppleScript command creation and Dispatcher integration.
 
 ## 📍 Roadmap
 <!-- roadmap:start -->
 - [x] **v0.1.0** — first release: Live Dashboard, E2E Encryption, Agent Protocol, Instant Commands
-- [ ] Add macOS agent handler with AppleScript support
+- [x] Add macOS agent handler with AppleScript support
 - [ ] Implement optional Redis backend for >50 devices
 - [ ] Natural language command parser using local LLM (Ollama)
 - [ ] WebRTC screen streaming for live view

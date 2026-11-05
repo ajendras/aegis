@@ -19,10 +19,10 @@ use Exception;
 /**
  * WebSocket Hub using Ratchet.
  *
- * Manages persistent connections from device agents (Android, iOS, Windows)
+ * Manages persistent connections from device agents (Android, iOS, Windows, macOS)
  * and the browser-based control panel. Handles registration, command delivery,
  * encrypted response processing, status updates and live broadcasting of
- * events to connected UI clients.
+ * events to connected UI clients. Now supports macOS with AppleScript payloads.
  */
 final class Hub implements MessageComponentInterface
 {
@@ -110,7 +110,7 @@ final class Hub implements MessageComponentInterface
     private function handleRegistration(ConnectionInterface $conn, array $data): void
     {
         $platform = strtolower(trim($data['platform'] ?? ''));
-        if (!in_array($platform, ['android', 'ios', 'windows'], true)) {
+        if (!in_array($platform, ['android', 'ios', 'windows', 'macos'], true)) {
             $conn->send(json_encode(['error' => 'Invalid or missing platform']));
             return;
         }

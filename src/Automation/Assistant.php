@@ -13,8 +13,9 @@ use InvalidArgumentException;
  * Provides a lightweight, deterministic "AI" that converts natural-language
  * goals into sequences of Aegis commands. No external LLM is used — matching
  * is performed against a curated keyword map with support for multi-step
- * workflows. The expand() method turns high-level steps into fully validated
- * command envelopes via Protocol.
+ * workflows. Now includes first-class support for macOS AppleScript commands.
+ * The expand() method turns high-level steps into fully validated command
+ * envelopes via Protocol.
  */
 final class Assistant
 {
@@ -80,6 +81,15 @@ final class Assistant
             ['type' => 'get_battery', 'params' => []],
             ['type' => 'diagnostics', 'params' => []],
             ['type' => 'notify', 'params' => ['title' => 'Monitoring', 'body' => 'System snapshot captured']],
+        ],
+        'applescript' => [
+            ['type' => 'applescript', 'params' => ['script' => 'display notification "Aegis Flow automation completed" with title "Aegis"']],
+        ],
+        'script' => [
+            ['type' => 'applescript', 'params' => ['script' => 'say "Hello from Aegis Flow on macOS"']],
+        ],
+        'macos' => [
+            ['type' => 'applescript', 'params' => ['script' => 'display dialog "Aegis Flow is ready"']],
         ],
     ];
 
@@ -149,6 +159,7 @@ final class Assistant
      *
      * Each step is passed through Protocol::createCommand() so the resulting
      * array contains id, ts, protocol_version, normalized params, etc.
+     * Now supports the new 'applescript' command type.
      *
      * @param array $steps Array of ['type' => string, 'params' => array] entries
      * @return array Fully expanded command envelopes
